@@ -1,8 +1,8 @@
-const express = require("express");
+﻿const express = require("express");
 const app = express();
 
 app.get("/", (req, res) => {
-  res.send("SHRI AI Agent Running 🚀");
+  res.send("🚀 SHRI AI Agent Running");
 });
 
 const PORT = process.env.PORT || 3000;
