@@ -1,2 +1,7 @@
 ﻿fastapi
 uvicorn[standard]
+langchain
+langchain-openai
+openai
+redis
+python-dotenv
