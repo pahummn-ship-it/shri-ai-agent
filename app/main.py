@@ -1,5 +1,6 @@
 import ast
 import os
+import socket
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
@@ -13,6 +14,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from redis import Redis
 from redis.exceptions import RedisError
+import requests
 
 load_dotenv()
 
@@ -198,6 +200,33 @@ def update_summary(llm: ChatOpenAI, user_id: str, user_text: str, assistant_text
 @app.get("/")
 def home() -> dict[str, str]:
     return {"message": "SHRI AI Agent Running"}
+
+
+@app.get("/diag/provider")
+def diag_provider() -> dict[str, Any]:
+    checks: dict[str, Any] = {}
+    targets = {
+        "openrouter": "https://openrouter.ai/api/v1/models",
+        "openai": "https://api.openai.com/v1/models",
+    }
+
+    for name, url in targets.items():
+        host = url.split("/")[2]
+        item: dict[str, Any] = {"host": host}
+        try:
+            item["dns_ip"] = socket.gethostbyname(host)
+        except Exception as exc:
+            item["dns_error"] = f"{type(exc).__name__}: {exc}"
+
+        try:
+            resp = requests.get(url, timeout=8)
+            item["http_status"] = resp.status_code
+        except Exception as exc:
+            item["http_error"] = f"{type(exc).__name__}: {exc}"
+
+        checks[name] = item
+
+    return checks
 
 
 @app.post("/chat")
