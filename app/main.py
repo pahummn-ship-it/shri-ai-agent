@@ -197,6 +197,45 @@ def update_summary(llm: ChatOpenAI, user_id: str, user_text: str, assistant_text
     return previous_summary
 
 
+def openrouter_direct_chat(
+    user_text: str, history: list[dict[str, str]], summary: str
+) -> tuple[str, str]:
+    key = os.getenv("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set.")
+
+    base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    model = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
+
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": (
+                "You are SHRI AI. Be concise and practical.\n\n"
+                f"Conversation summary:\n{summary or 'No prior summary.'}"
+            ),
+        }
+    ]
+    messages.extend(history[-20:])
+    messages.append({"role": "user", "content": user_text})
+
+    response = requests.post(
+        f"{base_url}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": os.getenv("APP_URL", "https://shri-ai-agent.up.railway.app"),
+            "X-Title": os.getenv("APP_NAME", "SHRI_AI"),
+        },
+        json={"model": model, "messages": messages, "temperature": 0},
+        timeout=35,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    text = payload["choices"][0]["message"]["content"]
+    return str(text), model
+
+
 @app.get("/")
 def home() -> dict[str, str]:
     return {"message": "SHRI AI Agent Running"}
@@ -257,6 +296,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
         user_input=req.message,
     )
 
+    used_fallback = False
     try:
         ai_message = llm_with_tools.invoke(messages)
         final_text = _to_text(ai_message.content)
@@ -284,11 +324,22 @@ def chat(req: ChatRequest) -> dict[str, Any]:
             final_text = _to_text(final_message.content)
 
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"LLM request failed ({type(exc).__name__}): {exc}") from exc
+        # OpenRouter sometimes works with raw HTTP while SDK path raises APIConnectionError.
+        if type(exc).__name__ == "APIConnectionError" and os.getenv("OPENROUTER_API_KEY"):
+            try:
+                final_text, model = openrouter_direct_chat(req.message, history, summary)
+                used_fallback = True
+            except Exception as fallback_exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"LLM request failed ({type(exc).__name__}): {exc}; fallback failed ({type(fallback_exc).__name__}): {fallback_exc}",
+                ) from fallback_exc
+        else:
+            raise HTTPException(status_code=502, detail=f"LLM request failed ({type(exc).__name__}): {exc}") from exc
 
     memory.add(req.user_id, "user", req.message)
     memory.add(req.user_id, "assistant", final_text)
-    updated_summary = update_summary(llm, req.user_id, req.message, final_text)
+    updated_summary = summary if used_fallback else update_summary(llm, req.user_id, req.message, final_text)
 
     return {
         "user_id": req.user_id,
@@ -296,6 +347,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
         "response": final_text,
         "summary": updated_summary,
         "tools_enabled": ["get_server_time", "calculator"],
+        "openrouter_fallback_used": used_fallback,
         "history_count": len(memory.get(req.user_id, limit=20)),
     }
 
