@@ -255,7 +255,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
             final_text = _to_text(final_message.content)
 
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"LLM request failed ({type(exc).__name__}): {exc}") from exc
 
     memory.add(req.user_id, "user", req.message)
     memory.add(req.user_id, "assistant", final_text)
@@ -269,3 +269,4 @@ def chat(req: ChatRequest) -> dict[str, Any]:
         "tools_enabled": ["get_server_time", "calculator"],
         "history_count": len(memory.get(req.user_id, limit=20)),
     }
+
