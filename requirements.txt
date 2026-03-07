@@ -1,9 +1,2 @@
-fastapi
-uvicorn
-langchain
-crewai
-openai
-supabase
-python-dotenv
-requests
-pydantic
+﻿fastapi
+uvicorn[standard]
