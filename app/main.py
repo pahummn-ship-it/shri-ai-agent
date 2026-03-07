@@ -125,13 +125,36 @@ def calculator(expression: str) -> str:
     return str(result)
 
 
+def get_openrouter_model_candidates() -> list[str]:
+    configured = os.getenv("OPENROUTER_MODEL_CANDIDATES", "").strip()
+    if configured:
+        candidates = [m.strip() for m in configured.split(",") if m.strip()]
+    else:
+        preferred = os.getenv("LLM_MODEL", "").strip()
+        defaults = [
+            "deepseek/deepseek-chat",
+            "meta-llama/llama-3.1-8b-instruct",
+            "mistralai/mistral-7b-instruct",
+            "google/gemma-7b-it",
+        ]
+        candidates = [preferred] + defaults if preferred else defaults
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for model in candidates:
+        if model not in seen:
+            deduped.append(model)
+            seen.add(model)
+    return deduped
+
+
 def get_llm() -> tuple[ChatOpenAI, str]:
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
 
     if openrouter_key:
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        model = os.getenv("LLM_MODEL", "deepseek/deepseek-chat")
+        model = get_openrouter_model_candidates()[0]
         return ChatOpenAI(api_key=openrouter_key, base_url=base_url, model=model, temperature=0), model
 
     if openai_key:
@@ -205,7 +228,7 @@ def openrouter_direct_chat(
         raise RuntimeError("OPENROUTER_API_KEY is not set.")
 
     base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
-    model = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
+    model_candidates = get_openrouter_model_candidates()
 
     messages: list[dict[str, str]] = [
         {
@@ -219,21 +242,31 @@ def openrouter_direct_chat(
     messages.extend(history[-20:])
     messages.append({"role": "user", "content": user_text})
 
-    response = requests.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": os.getenv("APP_URL", "https://shri-ai-agent.up.railway.app"),
-            "X-Title": os.getenv("APP_NAME", "SHRI_AI"),
-        },
-        json={"model": model, "messages": messages, "temperature": 0},
-        timeout=35,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    text = payload["choices"][0]["message"]["content"]
-    return str(text), model
+    last_error: str = "Unknown error"
+    for model in model_candidates:
+        response = requests.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": os.getenv("APP_URL", "https://shri-ai-agent.up.railway.app"),
+                "X-Title": os.getenv("APP_NAME", "SHRI_AI"),
+            },
+            json={"model": model, "messages": messages, "temperature": 0},
+            timeout=35,
+        )
+        if response.status_code == 402:
+            last_error = f"402 Payment Required on model {model}"
+            continue
+        try:
+            response.raise_for_status()
+            payload = response.json()
+            text = payload["choices"][0]["message"]["content"]
+            return str(text), model
+        except Exception as exc:
+            last_error = f"{type(exc).__name__} on model {model}: {exc}"
+
+    raise RuntimeError(f"All configured OpenRouter models failed. Last error: {last_error}")
 
 
 @app.get("/")
@@ -324,8 +357,8 @@ def chat(req: ChatRequest) -> dict[str, Any]:
             final_text = _to_text(final_message.content)
 
     except Exception as exc:
-        # OpenRouter sometimes works with raw HTTP while SDK path raises APIConnectionError.
-        if type(exc).__name__ == "APIConnectionError" and os.getenv("OPENROUTER_API_KEY"):
+        # Use direct OpenRouter fallback for both connectivity and payment/model fallback handling.
+        if os.getenv("OPENROUTER_API_KEY"):
             try:
                 final_text, model = openrouter_direct_chat(req.message, history, summary)
                 used_fallback = True
