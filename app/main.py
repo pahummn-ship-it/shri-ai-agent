@@ -7,6 +7,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from api.control_panel_api import router as control_panel_router
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
@@ -19,6 +20,7 @@ import requests
 load_dotenv()
 
 app = FastAPI(title=os.getenv("APP_NAME", "SHRI_AI"))
+app.include_router(control_panel_router)
 
 
 class ChatRequest(BaseModel):
