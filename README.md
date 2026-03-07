@@ -41,5 +41,10 @@ Base routes:
 - `POST /control/agents/{agent_id}/usage`
 - `GET /control/agents/{agent_id}/usage?limit=50`
 
+Supported channel types:
+- `website`
+- `whatsapp`
+- `android_app`
+
 DB schema for Supabase/Postgres:
 - `database/control_panel_schema.sql`

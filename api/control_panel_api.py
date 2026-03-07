@@ -50,7 +50,7 @@ class AgentResponse(BaseModel):
 
 
 class ChannelConnectRequest(BaseModel):
-    channel_type: Literal["website", "whatsapp", "flutter_app"] = "website"
+    channel_type: Literal["website", "whatsapp", "android_app"] = "website"
     config: dict[str, Any] = Field(default_factory=dict)
 
 
