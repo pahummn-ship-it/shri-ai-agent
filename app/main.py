@@ -132,10 +132,9 @@ def get_openrouter_model_candidates() -> list[str]:
     else:
         preferred = os.getenv("LLM_MODEL", "").strip()
         defaults = [
+            "openrouter/free",
             "deepseek/deepseek-chat",
-            "meta-llama/llama-3.1-8b-instruct",
-            "mistralai/mistral-7b-instruct",
-            "google/gemma-7b-it",
+            "openai/gpt-4o-mini",
         ]
         candidates = [preferred] + defaults if preferred else defaults
 
@@ -242,7 +241,7 @@ def openrouter_direct_chat(
     messages.extend(history[-20:])
     messages.append({"role": "user", "content": user_text})
 
-    last_error: str = "Unknown error"
+    failures: list[str] = []
     for model in model_candidates:
         response = requests.post(
             f"{base_url}/chat/completions",
@@ -256,7 +255,10 @@ def openrouter_direct_chat(
             timeout=35,
         )
         if response.status_code == 402:
-            last_error = f"402 Payment Required on model {model}"
+            failures.append(f"{model}: 402 Payment Required")
+            continue
+        if response.status_code == 404:
+            failures.append(f"{model}: 404 Model Not Found")
             continue
         try:
             response.raise_for_status()
@@ -264,9 +266,10 @@ def openrouter_direct_chat(
             text = payload["choices"][0]["message"]["content"]
             return str(text), model
         except Exception as exc:
-            last_error = f"{type(exc).__name__} on model {model}: {exc}"
+            failures.append(f"{model}: {type(exc).__name__}: {exc}")
 
-    raise RuntimeError(f"All configured OpenRouter models failed. Last error: {last_error}")
+    summary = "; ".join(failures) if failures else "Unknown error"
+    raise RuntimeError(f"All configured OpenRouter models failed. {summary}")
 
 
 @app.get("/")

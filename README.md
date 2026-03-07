@@ -7,9 +7,9 @@ Set these in Railway Variables (or `.env`) to enable automatic model fallback:
 ```env
 OPENROUTER_API_KEY=your_key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL_CANDIDATES=deepseek/deepseek-chat,meta-llama/llama-3.1-8b-instruct,mistralai/mistral-7b-instruct,google/gemma-7b-it
+OPENROUTER_MODEL_CANDIDATES=openrouter/free,deepseek/deepseek-chat,openai/gpt-4o-mini
 ```
 
 Behavior:
 - App tries models in listed order.
-- If a model returns `402 Payment Required`, app automatically tries next model.
+- If a model returns `402` or `404`, app automatically tries next model.
