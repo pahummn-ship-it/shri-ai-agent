@@ -1,8 +1,11 @@
 import ast
+import json
 import os
+import re
 import socket
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -91,6 +94,7 @@ class RedisMemory:
 
 
 memory = RedisMemory()
+FAQ_PATH = Path("knowledge/pahummn_faq.json")
 
 
 @tool
@@ -147,6 +151,54 @@ def get_openrouter_model_candidates() -> list[str]:
             deduped.append(model)
             seen.add(model)
     return deduped
+
+
+def _tokenize(text: str) -> set[str]:
+    return set(re.findall(r"[a-zA-Z0-9_]+", text.lower()))
+
+
+def load_faq_corpus() -> list[dict[str, str]]:
+    if not FAQ_PATH.exists():
+        return []
+    try:
+        raw = json.loads(FAQ_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            cleaned: list[dict[str, str]] = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                q = str(item.get("question", "")).strip()
+                a = str(item.get("answer", "")).strip()
+                if q and a:
+                    cleaned.append({"question": q, "answer": a})
+            return cleaned
+    except Exception:
+        return []
+    return []
+
+
+FAQ_CORPUS = load_faq_corpus()
+
+
+def retrieve_faq_context(query: str, top_k: int = 4) -> tuple[str, int]:
+    if not FAQ_CORPUS:
+        return "No FAQ knowledge available.", 0
+
+    q_tokens = _tokenize(query)
+    scored: list[tuple[int, dict[str, str]]] = []
+    for item in FAQ_CORPUS:
+        qa_tokens = _tokenize(item["question"] + " " + item["answer"])
+        score = len(q_tokens & qa_tokens)
+        if score > 0:
+            scored.append((score, item))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    picked = [item for _, item in scored[:top_k]]
+    if not picked:
+        return "No relevant FAQ found for this query.", 0
+
+    blocks = [f"Q: {it['question']}\nA: {it['answer']}" for it in picked]
+    return "\n\n".join(blocks), len(picked)
 
 
 def get_llm() -> tuple[ChatOpenAI, str]:
@@ -222,7 +274,7 @@ def update_summary(llm: ChatOpenAI, user_id: str, user_text: str, assistant_text
 
 
 def openrouter_direct_chat(
-    user_text: str, history: list[dict[str, str]], summary: str
+    user_text: str, history: list[dict[str, str]], summary: str, faq_context: str
 ) -> tuple[str, str]:
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
@@ -235,8 +287,12 @@ def openrouter_direct_chat(
         {
             "role": "system",
             "content": (
-                "You are SHRI AI. Be concise and practical.\n\n"
-                f"Conversation summary:\n{summary or 'No prior summary.'}"
+                "You are SHRI AI support bot for pahummn.com.\n"
+                "Answer using only the provided FAQ context.\n"
+                "If information is not present in FAQ context, reply exactly: "
+                "\"I don't have this information on pahummn.com yet.\"\n\n"
+                f"Conversation summary:\n{summary or 'No prior summary.'}\n\n"
+                f"FAQ context:\n{faq_context}"
             ),
         }
     ]
@@ -313,15 +369,20 @@ def chat(req: ChatRequest) -> dict[str, Any]:
 
     history = memory.get(req.user_id, limit=20)
     summary = memory.get_summary(req.user_id)
+    faq_context, faq_hits = retrieve_faq_context(req.message, top_k=4)
 
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
                 (
-                    "You are SHRI AI. Be concise and practical. "
-                    "Use tools when needed for arithmetic or current server time.\n\n"
-                    "Conversation summary:\n{summary}"
+                    "You are SHRI AI support bot for pahummn.com. Be concise and practical.\n"
+                    "Use tools only for arithmetic or current server time if needed.\n"
+                    "Answer only using FAQ context.\n"
+                    "If answer is missing in context, reply exactly: "
+                    "\"I don't have this information on pahummn.com yet.\"\n\n"
+                    "Conversation summary:\n{summary}\n\n"
+                    "FAQ context:\n{faq_context}"
                 ),
             ),
             MessagesPlaceholder("history"),
@@ -330,6 +391,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
     )
     messages: list[Any] = prompt.format_messages(
         summary=summary or "No prior summary.",
+        faq_context=faq_context,
         history=_history_to_messages(history),
         user_input=req.message,
     )
@@ -365,7 +427,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
         # Use direct OpenRouter fallback for both connectivity and payment/model fallback handling.
         if os.getenv("OPENROUTER_API_KEY"):
             try:
-                final_text, model = openrouter_direct_chat(req.message, history, summary)
+                final_text, model = openrouter_direct_chat(req.message, history, summary, faq_context)
                 used_fallback = True
             except Exception as fallback_exc:
                 raise HTTPException(
@@ -384,6 +446,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
         "model": model,
         "response": final_text,
         "summary": updated_summary,
+        "knowledge_hits": faq_hits,
         "tools_enabled": ["get_server_time", "calculator"],
         "openrouter_fallback_used": used_fallback,
         "history_count": len(memory.get(req.user_id, limit=20)),

@@ -48,3 +48,34 @@ Supported channel types:
 
 DB schema for Supabase/Postgres:
 - `database/control_panel_schema.sql`
+
+## Website FAQ / RAG Support Mode
+
+Knowledge source file:
+- `knowledge/pahummn_faq.json`
+
+Behavior in `/chat`:
+- Retrieves top relevant FAQ blocks from `pahummn_faq.json`
+- Forces responses to use only FAQ context
+- If info is missing, bot replies:
+  - `I don't have this information on pahummn.com yet.`
+- Response includes `knowledge_hits` count
+
+## Next Steps Status
+
+### Core Build
+- [x] Basic AI API
+- [x] AI memory system (Redis + summary memory)
+- [x] AI tools (calculator, server time)
+- [x] Website chatbot
+- [ ] Android app integration
+- [ ] WhatsApp bot
+
+### Control Panel (Dashboard)
+- [x] Create agents API
+- [x] Connect website API
+- [x] Connect WhatsApp API
+- [x] Connect app API (`android_app`)
+
+### Vision
+- [ ] Universal AI Agent Platform (full product stage)
